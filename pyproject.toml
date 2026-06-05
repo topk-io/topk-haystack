@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026-present AUTHOR <your@email.com>
+# SPDX-FileCopyrightText: 2026-present TopK Team <support@topk.io>
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -7,19 +7,25 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "example-haystack"  # TODO: Replace with your package name, e.g. "deepset-ai-haystack"
+name = "topk-haystack"
 dynamic = ["version"]
-description = "A custom Haystack component"  # TODO: Replace with your description
+description = "TopK document store integration for Haystack with vector search, semantic search, keyword search, hybrid search and metadata retrievers"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 keywords = [
     "haystack",
-    # TODO: Add relevant keywords for your integration
+    "topk",
+    "integration",
+    "document",
+    "store",
+    "vector",
+    "keyword",
+    "semantic",
+    "hybrid"
 ]
 authors = [
-    # TODO: Replace with your name and email
-    { name = "AUTHOR", email = "your@email.com" },
+    { name = "TopK Team", email = "support@topk.io" },
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -36,14 +42,13 @@ classifiers = [
 ]
 dependencies = [
     "haystack-ai",
-    # TODO: Add your integration-specific dependencies here
+    "topk-sdk>=0.11.0"
 ]
 
 [project.urls]
-# TODO: Replace with your repository URL
-Documentation = "https://github.com/your-org/example-haystack#readme"
-Issues = "https://github.com/your-org/example-haystack/issues"
-Source = "https://github.com/your-org/example-haystack"
+Documentation = "https://github.com/topk-io/topk-haystack#readme"
+Issues = "https://github.com/topk-io/topk-haystack/issues"
+Source = "https://github.com/topk-io/topk-haystack"
 
 [tool.hatch.version]
 source = "vcs"
@@ -63,10 +68,18 @@ dependencies = ["ruff"]
 fmt = "ruff check --fix {args:.} && ruff format {args:.}"
 fmt-check = "ruff check {args:.} && ruff format --check {args:.}"
 
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "sentence-transformers>=5.5.1",
+]
+
 [tool.hatch.envs.test]
 dependencies = [
     "pytest",
     "pytest-cov",
+    "sentence-transformers>=5.5.1",
 ]
 
 [tool.hatch.envs.test.scripts]
@@ -115,14 +128,14 @@ select = [
 ]
 ignore = [
     "B027",    # empty method in abstract base class
-    "S105",    # possible hardcoded password
-    "S106",    # possible hardcoded password
-    "S107",    # possible hardcoded password
     "C901",    # too complex
     "PLR0911", # too many return statements
     "PLR0912", # too many branches
     "PLR0913", # too many arguments
     "PLR0915", # too many statements
+    "S105",    # possible hardcoded password
+    "S106",    # possible hardcoded password
+    "S107",    # possible hardcoded password
 ]
 
 [tool.ruff.lint.isort]
@@ -133,9 +146,9 @@ ban-relative-imports = "parents"
 
 [tool.ruff.lint.per-file-ignores]
 # Tests can use magic values, assertions, and relative imports
-"tests/**/*" = ["D", "PLR2004", "S101", "TID252", "ANN"]
+"tests/**/*" = ["D", "PLR2004", "S101", "S110", "TID252", "ANN"]
 # Examples can print their output and don't need type annotations
-"examples/**/*" = ["D", "T201", "ANN"]
+"examples/**/*" = ["D", "T201", "ANN", "E501"]
 
 [tool.mypy]
 install_types = true
@@ -164,3 +177,4 @@ markers = [
     "integration: integration tests",
 ]
 addopts = ["--import-mode=importlib"]
+

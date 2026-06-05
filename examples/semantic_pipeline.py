@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: 2026-present TopK Team <support@topk.io>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Semantic retriever pipeline example.
+
+TopK embeds documents and queries server-side — no embedder component needed.
+
+Run:
+    TOPK_API_KEY=<key> TOPK_REGION=<region> uv run python examples/semantic_pipeline.py
+"""
+
+import os
+
+from haystack import Document, Pipeline
+from haystack.components.writers import DocumentWriter
+from haystack.utils import Secret
+
+from haystack_integrations.components.topk import TopKSemanticRetriever
+from haystack_integrations.document_stores.topk import TopKDocumentStore
+
+store = TopKDocumentStore(
+    api_key=Secret.from_env_var("TOPK_API_KEY"),
+    region=os.environ.get("TOPK_REGION", "aws-us-east-1-elastica"),
+    collection_name="example-semantic",
+    recreate_collection=True,
+)
+
+# Each document describes a language's defining traits — no language name included
+documents = [
+    Document(
+        content="Statically typed, compiles to machine code, ownership model guarantees memory safety without a garbage collector or runtime."
+    ),
+    Document(
+        content="Interpreted, dynamically typed, famous for readable syntax and a vast ecosystem of scientific and data libraries."
+    ),
+    Document(
+        content="Goroutines and channels are first-class primitives, making concurrent network services simple to write and reason about."
+    ),
+    Document(
+        content="Compiles to bytecode, runs on a virtual machine, write-once-run-anywhere portability across operating systems."
+    ),
+    Document(
+        content="Runs natively in the browser, dynamically typed, enables interactive interfaces that update without full page reloads."
+    ),
+    Document(
+        content="A typed superset that adds static analysis and autocompletion to large JavaScript codebases without replacing the runtime."
+    ),
+    Document(
+        content="A functional language with immutable data by default, pattern matching, and a type system that makes invalid states unrepresentable."
+    ),
+    Document(
+        content="Designed for the JVM, combines object-oriented and functional styles, known for concise syntax and powerful collection APIs."
+    ),
+]
+
+indexing = Pipeline()
+indexing.add_component("writer", DocumentWriter(document_store=store))
+indexing.run({"writer": {"documents": documents}})
+
+retriever = TopKSemanticRetriever(document_store=store, top_k=2)
+pipeline = Pipeline()
+pipeline.add_component("retriever", retriever)
+
+queries = [
+    "I want to add type checking to my existing web frontend without switching frameworks",
+    "building a high-throughput API server that handles thousands of connections at once",
+    "I need low-level performance but the program must never crash due to memory bugs",
+    "I want the compiler to force me to handle every possible error and edge case",
+]
+
+for query in queries:
+    print(f"\nQuery: {query!r}")
+    result = pipeline.run({"retriever": {"query": query}})
+    for doc in result["retriever"]["documents"]:
+        print(f"  [{doc.score:.3f}] {doc.content}")
