@@ -72,6 +72,7 @@ fmt-check = "ruff check {args:.} && ruff format --check {args:.}"
 dev = [
     "pytest",
     "pytest-cov",
+    "ruff",
     "sentence-transformers>=5.5.1",
 ]
 

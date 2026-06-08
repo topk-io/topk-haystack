@@ -1,8 +1,9 @@
 # topk-haystack
 
-[TopK](https://topk.io) unified retrieval engine integration for [Haystack](https://haystack.deepset.ai/).
+Build RAG pipelines in a few lines of code with [TopK](https://topk.io) and [Haystack](https://haystack.deepset.ai/).
 
-Supports BM25 keyword search, dense vector search, built-in semantic search, and hybrid search for your documents.
+Ships with retrievers for every search mode — semantic (embeddings handled server-side, no embedder component needed),
+dense vector, BM25 keyword, hybrid, and metadata filtering. Scales to billions of documents with native partition support for multi-tenant workloads.
 
 ## Installation
 
