@@ -7,10 +7,11 @@ from typing import Any
 from haystack import component, default_from_dict, default_to_dict
 from haystack.dataclasses import Document
 from haystack.document_stores.types import FilterPolicy, apply_filter_policy
+from topk_sdk.data import f32_list
 from topk_sdk.query import field, fn, match, select
 
 from haystack_integrations.document_stores.topk.document_store import TopKDocumentStore, _topk_to_document
-from haystack_integrations.document_stores.topk.filters import translate_filters
+from haystack_integrations.document_stores.topk.filters import extract_meta_fields, translate_filters
 
 
 @component
@@ -61,11 +62,14 @@ class TopKHybridRetriever:
         """
         filters_merged = apply_filter_policy(self._filter_policy, self._filters, filters)
         effective_k = top_k if top_k is not None else self._top_k
+        meta_fields = extract_meta_fields(filters_merged)
 
         query_builder = select(
             "content",
             "blob",
-            vector_score=fn.vector_distance("embedding", query_embedding),
+            "blob_mime_type",
+            *meta_fields,
+            vector_score=fn.vector_distance("embedding", f32_list(query_embedding)),
             bm25_score=fn.bm25_score(),
         )
 
@@ -77,7 +81,7 @@ class TopKHybridRetriever:
             if expr is not None:
                 query_builder = query_builder.filter(expr)
 
-        # Rank by combined score
+        # Rank server-side by the sum of both scores
         query_builder = query_builder.topk(field("vector_score") + field("bm25_score"), effective_k, asc=False)
 
         results = self._document_store._collection().query(query_builder)
@@ -86,7 +90,7 @@ class TopKHybridRetriever:
             vs = r.get("vector_score")
             bs = r.get("bm25_score")
             fused_score = (vs if vs is not None else 0.0) + (bs if bs is not None else 0.0)
-            docs.append(_topk_to_document({**r, "score": fused_score}))
+            docs.append(_topk_to_document({**r, "score": fused_score}, meta_fields=meta_fields))
         return {"documents": docs}
 
     def to_dict(self) -> dict[str, Any]:

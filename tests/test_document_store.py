@@ -5,7 +5,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from haystack.dataclasses import Document
+from haystack.dataclasses import ByteStream, Document
 from haystack.document_stores.types import DuplicatePolicy
 from haystack.utils import Secret
 
@@ -33,14 +33,14 @@ class TestTopKDocumentStoreUnit:
         assert result[0].content == "hello"
         assert result[1].content == "world"
 
-    def test_filter_documents_selects_content_and_blob(self, mock_store: TopKDocumentStore) -> None:
+    def test_filter_documents_selects_content_blob_and_blob_mime_type(self, mock_store: TopKDocumentStore) -> None:
         mock_store._client.collection.return_value.query.return_value = []
         with patch("haystack_integrations.document_stores.topk.document_store.select") as mock_select:
             mock_query = MagicMock()
             mock_select.return_value = mock_query
             mock_query.limit.return_value = mock_query
             mock_store.filter_documents()
-        mock_select.assert_called_once_with("content", "blob")
+        mock_select.assert_called_once_with("content", "blob", "blob_mime_type")
 
     def test_filter_documents_applies_default_limit(self, mock_store: TopKDocumentStore) -> None:
         mock_store._client.collection.return_value.query.return_value = []
@@ -79,7 +79,7 @@ class TestTopKDocumentStoreUnit:
             mock_query.filter.return_value = mock_query
             mock_query.limit.return_value = mock_query
             mock_store.filter_documents(filters={"field": "meta.lang", "operator": "==", "value": "python"})
-        mock_select.assert_called_once_with("content", "blob", "meta.lang")
+        mock_select.assert_called_once_with("content", "blob", "blob_mime_type", "meta.lang")
 
     def test_filter_documents_reconstructs_meta(self, mock_store: TopKDocumentStore) -> None:
         mock_store._client.collection.return_value.query.return_value = [
@@ -87,6 +87,23 @@ class TestTopKDocumentStoreUnit:
         ]
         result = mock_store.filter_documents(filters={"field": "meta.lang", "operator": "==", "value": "python"})
         assert result[0].meta == {"lang": "python"}
+
+    def test_filter_documents_reconstructs_blob_mime_type(self, mock_store: TopKDocumentStore) -> None:
+        mock_store._client.collection.return_value.query.return_value = [
+            {"_id": "1", "blob": b"%PDF", "blob_mime_type": "application/pdf"}
+        ]
+        result = mock_store.filter_documents()
+        assert result[0].blob is not None
+        assert result[0].blob.data == b"%PDF"
+        assert result[0].blob.mime_type == "application/pdf"
+
+    def test_write_documents_stores_blob_mime_type(self, mock_store: TopKDocumentStore) -> None:
+        doc = Document(blob=ByteStream(data=b"%PDF", mime_type="application/pdf"))
+        mock_store.write_documents([doc])
+        written = mock_store._client.collection.return_value.upsert.call_args.args[0][0]
+        assert written["_id"] == doc.id
+        assert written["blob"] == b"%PDF"
+        assert written["blob_mime_type"] == "application/pdf"
 
     def test_invalid_embedding_dim_raises(self) -> None:
         with pytest.raises(ValueError, match="embedding_dim"):
@@ -103,6 +120,12 @@ class TestTopKDocumentStoreUnit:
                 patch.object(TopKDocumentStore, "_ensure_collection"),
             ):
                 TopKDocumentStore(region="aws-us-east-1-elastica", api_key=Secret.from_token("fake"), embedding_dim=-1)
+
+    def test_schema_includes_blob_mime_type(self) -> None:
+        with patch("haystack_integrations.document_stores.topk.document_store.Client") as mock_client:
+            TopKDocumentStore(region="aws-us-east-1-elastica", api_key=Secret.from_token("fake"))
+        schema = mock_client.return_value.collections.return_value.create.call_args.args[1]
+        assert "blob_mime_type" in schema
 
     def test_filter_documents_queries_correct_collection(self, mock_store: TopKDocumentStore) -> None:
         mock_store._client.collection.return_value.query.return_value = []
@@ -142,6 +165,16 @@ class TestTopKDocumentStoreUnit:
             store = TopKDocumentStore(region="aws-us-east-1-elastica")
         d = store.to_dict()
         assert d["init_parameters"]["partition"] is None
+
+    def test_duplicate_policy_fail_raises(self, mock_store: TopKDocumentStore) -> None:
+        with pytest.raises(ValueError, match=r"DuplicatePolicy\.FAIL"):
+            mock_store.write_documents([Document(content="doc")], policy=DuplicatePolicy.FAIL)
+        mock_store._client.collection.assert_not_called()
+
+    def test_duplicate_policy_skip_raises(self, mock_store: TopKDocumentStore) -> None:
+        with pytest.raises(ValueError, match=r"DuplicatePolicy\.SKIP"):
+            mock_store.write_documents([Document(content="doc")], policy=DuplicatePolicy.SKIP)
+        mock_store._client.collection.assert_not_called()
 
 
 @pytest.mark.integration
@@ -200,21 +233,19 @@ class TestTopKDocumentStore:
         document_store.write_documents([doc2], policy=DuplicatePolicy.OVERWRITE)
         assert document_store.count_documents() == 1
 
-    def test_duplicate_policy_fail_warns_and_upserts(self, document_store: TopKDocumentStore) -> None:
+    def test_duplicate_policy_fail_raises(self, document_store: TopKDocumentStore) -> None:
         doc = Document(id="fail-id", content="first")
         document_store.write_documents([doc])
-        written = document_store.write_documents(
-            [Document(id="fail-id", content="second")], policy=DuplicatePolicy.FAIL
-        )
-        assert written == 1
+        with pytest.raises(ValueError, match=r"DuplicatePolicy\.FAIL"):
+            document_store.write_documents([Document(id="fail-id", content="second")], policy=DuplicatePolicy.FAIL)
+        assert document_store.count_documents() == 1
 
-    def test_duplicate_policy_skip_warns_and_upserts(self, document_store: TopKDocumentStore) -> None:
+    def test_duplicate_policy_skip_raises(self, document_store: TopKDocumentStore) -> None:
         doc = Document(id="skip-id", content="first")
         document_store.write_documents([doc])
-        written = document_store.write_documents(
-            [Document(id="skip-id", content="second")], policy=DuplicatePolicy.SKIP
-        )
-        assert written == 1
+        with pytest.raises(ValueError, match=r"DuplicatePolicy\.SKIP"):
+            document_store.write_documents([Document(id="skip-id", content="second")], policy=DuplicatePolicy.SKIP)
+        assert document_store.count_documents() == 1
 
     def test_to_dict_from_dict_roundtrip(self, document_store: TopKDocumentStore) -> None:
         data = document_store.to_dict()
@@ -243,3 +274,12 @@ class TestTopKDocumentStore:
         # require explicit whitelisting in select — see TopKDocumentStore class docstring).
         assert len(result) == 1
         assert result[0].content == "meta doc"
+
+    def test_blob_mime_type_roundtrip(self, document_store: TopKDocumentStore) -> None:
+        doc = Document(blob=ByteStream(data=b"%PDF-1.4", mime_type="application/pdf"))
+        document_store.write_documents([doc])
+        result = document_store.filter_documents()
+        assert len(result) == 1
+        assert result[0].blob is not None
+        assert result[0].blob.data == b"%PDF-1.4"
+        assert result[0].blob.mime_type == "application/pdf"

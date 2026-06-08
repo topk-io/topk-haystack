@@ -18,7 +18,13 @@ class TestTopKHybridRetrieverUnit:
         store = MagicMock(spec=TopKDocumentStore)
         store.collection_name = "test_collection"
         store._collection.return_value.query.return_value = [
-            {"_id": "1", "content": "Python is great", "vector_score": 0.8, "bm25_score": 0.6}
+            {
+                "_id": "1",
+                "content": "Python is great",
+                "vector_score": 0.8,
+                "bm25_score": 0.6,
+                "meta.lang": "python",
+            }
         ]
         return store
 
@@ -37,6 +43,22 @@ class TestTopKHybridRetrieverUnit:
             filters={"field": "meta.lang", "operator": "==", "value": "python"},
         )
         assert "documents" in result
+        assert result["documents"][0].meta == {"lang": "python"}
+
+    def test_run_selects_filtered_meta_fields(self, mock_store: MagicMock) -> None:
+        retriever = TopKHybridRetriever(document_store=mock_store)
+        query_builder = MagicMock()
+        query_builder.filter.return_value = query_builder
+        query_builder.topk.return_value = query_builder
+        with patch(
+            "haystack_integrations.components.topk.hybrid_retriever.select", return_value=query_builder
+        ) as mock_select:
+            retriever.run(
+                query_embedding=[0.1, 0.2, 0.3, 0.4],
+                query="Python",
+                filters={"field": "meta.lang", "operator": "==", "value": "python"},
+            )
+        assert mock_select.call_args.args == ("content", "blob", "blob_mime_type", "meta.lang")
 
     def test_run_top_k_override(self, mock_store: MagicMock) -> None:
         retriever = TopKHybridRetriever(document_store=mock_store, top_k=10)

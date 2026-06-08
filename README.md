@@ -62,7 +62,9 @@ TopKDocumentStore(
 )
 ```
 
-TopK uses upsert semantics — documents with the same ID are always overwritten. `DuplicatePolicy.SKIP` and `DuplicatePolicy.FAIL` are accepted for interface compatibility but fall back to upsert with a warning.
+TopK uses upsert semantics — documents with the same ID are overwritten when using `DuplicatePolicy.NONE` or `DuplicatePolicy.OVERWRITE`. `DuplicatePolicy.SKIP` and `DuplicatePolicy.FAIL` are not supported and raise a `ValueError`.
+
+TopK can only return metadata fields that are explicitly selected. This integration automatically returns `meta.*` fields referenced in filters; unfiltered queries return documents without metadata.
 
 ## Retrievers
 

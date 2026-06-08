@@ -88,17 +88,17 @@ def _translate_logical(filters: dict[str, Any]) -> LogicalExpr:
 
 
 def _translate_comparison(filters: dict[str, Any]) -> LogicalExpr:
-    field_name = filters.get("field")
-    operator = filters.get("operator")
-    value = filters.get("value")
-
-    if field_name is None or operator is None:
+    if "field" not in filters or "operator" not in filters:
         msg = f"Invalid comparison filter: {filters}"
         raise FilterError(msg)
 
     if "value" not in filters:
         msg = f"Comparison filter is missing 'value' key: {filters}"
         raise FilterError(msg)
+
+    field_name: str = filters["field"]
+    operator: str = filters["operator"]
+    value = filters["value"]
 
     f = field(field_name)
 

@@ -58,7 +58,7 @@ class TopKMetadataRetriever:
         expr = translate_filters(filters_merged) if filters_merged else None
         meta_fields = extract_meta_fields(filters_merged)
 
-        query_builder = select("content", "blob", *meta_fields)
+        query_builder = select("content", "blob", "blob_mime_type", *meta_fields)
         if expr is not None:
             query_builder = query_builder.filter(expr)
         query_builder = query_builder.limit(effective_k)

@@ -17,7 +17,9 @@ class TestTopKSemanticRetrieverUnit:
     def mock_store(self) -> MagicMock:
         store = MagicMock(spec=TopKDocumentStore)
         store.collection_name = "test_collection"
-        store._collection.return_value.query.return_value = [{"_id": "1", "content": "Python is great", "score": 0.95}]
+        store._collection.return_value.query.return_value = [
+            {"_id": "1", "content": "Python is great", "score": 0.95, "meta.lang": "rust"}
+        ]
         return store
 
     def test_run_returns_documents(self, mock_store: MagicMock) -> None:
@@ -34,6 +36,18 @@ class TestTopKSemanticRetrieverUnit:
             filters={"field": "meta.lang", "operator": "==", "value": "rust"},
         )
         assert "documents" in result
+        assert result["documents"][0].meta == {"lang": "rust"}
+
+    def test_run_selects_filtered_meta_fields(self, mock_store: MagicMock) -> None:
+        retriever = TopKSemanticRetriever(document_store=mock_store)
+        query = MagicMock()
+        query.filter.return_value = query
+        query.topk.return_value = query
+        with patch(
+            "haystack_integrations.components.topk.semantic_retriever.select", return_value=query
+        ) as mock_select:
+            retriever.run(query="memory safe", filters={"field": "meta.lang", "operator": "==", "value": "rust"})
+        assert mock_select.call_args.args == ("content", "blob", "blob_mime_type", "meta.lang")
 
     def test_to_dict(self, mock_store: MagicMock) -> None:
         retriever = TopKSemanticRetriever(

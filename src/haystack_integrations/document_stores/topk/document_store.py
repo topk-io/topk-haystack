@@ -2,11 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import logging
 from typing import Any, Literal
 
 from haystack import default_from_dict, default_to_dict
-from haystack.dataclasses import ByteStream, Document, SparseEmbedding
+from haystack.dataclasses import ByteStream, Document
 from haystack.document_stores.types import DuplicatePolicy
 from haystack.utils import Secret
 from topk_sdk import Client, CollectionClient
@@ -21,8 +20,6 @@ from haystack_integrations.document_stores.topk.filters import (
     reconstruct_meta,
     translate_filters,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def _document_to_topk(doc: Document) -> dict[str, Any]:
@@ -45,6 +42,8 @@ def _document_to_topk(doc: Document) -> dict[str, Any]:
 
     if doc.blob is not None:
         data["blob"] = doc.blob.data
+        if doc.blob.mime_type is not None:
+            data["blob_mime_type"] = doc.blob.mime_type
 
     return data
 
@@ -54,17 +53,12 @@ def _topk_to_document(result: dict[str, Any], meta_fields: list[str] | None = No
     doc_id = result.get("_id", "")
     content = result.get("content")
     score = result.get("score")
-    embedding = result.get("embedding")
     blob_data = result.get("blob")
+    blob_mime_type = result.get("blob_mime_type")
 
     blob = None
     if blob_data is not None:
-        blob = ByteStream(data=blob_data)
-
-    sparse_raw = result.get("sparse_embedding")
-    sparse_embedding = None
-    if sparse_raw is not None:
-        sparse_embedding = SparseEmbedding(indices=sparse_raw["indices"], values=sparse_raw["values"])
+        blob = ByteStream(data=blob_data, mime_type=blob_mime_type)
 
     meta = reconstruct_meta(result, meta_fields) if meta_fields else {}
 
@@ -73,9 +67,7 @@ def _topk_to_document(result: dict[str, Any], meta_fields: list[str] | None = No
         content=content,
         meta=meta,
         score=score,
-        embedding=embedding,
         blob=blob,
-        sparse_embedding=sparse_embedding,
     )
 
 
@@ -87,7 +79,7 @@ class TopKDocumentStore:
     and hybrid (vector + BM25) search via the companion Retriever components.
 
     TopK uses upsert semantics — writes always overwrite existing documents with the same ID.
-    ``DuplicatePolicy.SKIP`` and ``FAIL`` are not supported and log a warning if passed.
+    ``DuplicatePolicy.SKIP`` and ``FAIL`` are not supported and raise if passed.
 
     Meta fields are stored and filterable but only returned in query results when explicitly
     referenced in the filter — TopK requires field paths to be whitelisted in the select stage.
@@ -151,7 +143,8 @@ class TopKDocumentStore:
             "content": text().index(keyword_index()).index(semantic_index()),
             "embedding": f32_vector(self.embedding_dim).index(vector_index(metric=self.similarity)),
             "sparse_embedding": f32_sparse_vector(),
-            "blob": topk_bytes().optional(),
+            "blob": topk_bytes(),
+            "blob_mime_type": text(),
         }
 
         try:
@@ -178,7 +171,7 @@ class TopKDocumentStore:
         expr = translate_filters(filters) if filters else None
         meta_fields = extract_meta_fields(filters)
 
-        query = select("content", "blob", *meta_fields)
+        query = select("content", "blob", "blob_mime_type", *meta_fields)
         if expr is not None:
             query = query.filter(expr)
         query = query.limit(self.filter_documents_limit)
@@ -191,20 +184,21 @@ class TopKDocumentStore:
         Write documents to the store.
 
         TopK only supports upsert — all writes overwrite existing documents with the same ID.
-        Passing ``SKIP`` or ``FAIL`` logs a warning and falls back to upsert.
+        Passing ``SKIP`` or ``FAIL`` raises because TopK cannot honor those policies.
 
         :param documents: Documents to write.
-        :param policy: Accepted for interface compatibility; only upsert semantics are applied.
+        :param policy: ``NONE`` and ``OVERWRITE`` use upsert semantics. ``SKIP`` and ``FAIL`` are unsupported.
         :returns: Number of documents written.
         """
         if not documents:
             return 0
 
         if policy in (DuplicatePolicy.SKIP, DuplicatePolicy.FAIL):
-            logger.warning(
-                "TopKDocumentStore only supports upsert. DuplicatePolicy.%s is not supported and will be ignored.",
-                policy.name,
+            msg = (
+                f"TopKDocumentStore does not support DuplicatePolicy.{policy.name}; "
+                "use DuplicatePolicy.NONE or DuplicatePolicy.OVERWRITE."
             )
+            raise ValueError(msg)
 
         self._collection().upsert([_document_to_topk(d) for d in documents])
         return len(documents)

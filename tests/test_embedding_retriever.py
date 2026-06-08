@@ -17,7 +17,9 @@ class TestTopKEmbeddingRetrieverUnit:
     def mock_store(self) -> MagicMock:
         store = MagicMock(spec=TopKDocumentStore)
         store.collection_name = "test_collection"
-        store._collection.return_value.query.return_value = [{"_id": "1", "content": "hello", "score": 0.9}]
+        store._collection.return_value.query.return_value = [
+            {"_id": "1", "content": "hello", "score": 0.9, "meta.year": 2024}
+        ]
         return store
 
     def test_run_returns_documents(self, mock_store: MagicMock) -> None:
@@ -39,6 +41,21 @@ class TestTopKEmbeddingRetrieverUnit:
             filters={"field": "meta.year", "operator": "==", "value": 2024},
         )
         assert "documents" in result
+        assert result["documents"][0].meta == {"year": 2024}
+
+    def test_run_selects_filtered_meta_fields(self, mock_store: MagicMock) -> None:
+        retriever = TopKEmbeddingRetriever(document_store=mock_store)
+        query = MagicMock()
+        query.filter.return_value = query
+        query.topk.return_value = query
+        with patch(
+            "haystack_integrations.components.topk.embedding_retriever.select", return_value=query
+        ) as mock_select:
+            retriever.run(
+                query_embedding=[0.1, 0.2, 0.3, 0.4],
+                filters={"field": "meta.year", "operator": "==", "value": 2024},
+            )
+        assert mock_select.call_args.args == ("content", "blob", "blob_mime_type", "meta.year")
 
     def test_to_dict(self, mock_store: MagicMock) -> None:
         retriever = TopKEmbeddingRetriever(

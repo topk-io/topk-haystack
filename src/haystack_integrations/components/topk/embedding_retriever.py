@@ -11,7 +11,7 @@ from topk_sdk.data import f32_list
 from topk_sdk.query import field, fn, select
 
 from haystack_integrations.document_stores.topk.document_store import TopKDocumentStore, _topk_to_document
-from haystack_integrations.document_stores.topk.filters import translate_filters
+from haystack_integrations.document_stores.topk.filters import extract_meta_fields, translate_filters
 
 
 @component
@@ -57,8 +57,15 @@ class TopKEmbeddingRetriever:
         """
         filters_merged = apply_filter_policy(self._filter_policy, self._filters, filters)
         effective_k = top_k if top_k is not None else self._top_k
+        meta_fields = extract_meta_fields(filters_merged)
 
-        query = select("content", "blob", score=fn.vector_distance("embedding", f32_list(query_embedding)))
+        query = select(
+            "content",
+            "blob",
+            "blob_mime_type",
+            *meta_fields,
+            score=fn.vector_distance("embedding", f32_list(query_embedding)),
+        )
 
         if filters_merged:
             expr = translate_filters(filters_merged)
@@ -68,7 +75,7 @@ class TopKEmbeddingRetriever:
         query = query.topk(field("score"), effective_k, asc=False)
 
         results = self._document_store._collection().query(query)
-        return {"documents": [_topk_to_document(r) for r in results]}
+        return {"documents": [_topk_to_document(r, meta_fields=meta_fields) for r in results]}
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the retriever to a dict."""

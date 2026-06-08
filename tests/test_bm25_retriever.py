@@ -17,7 +17,9 @@ class TestTopKBM25RetrieverUnit:
     def mock_store(self) -> MagicMock:
         store = MagicMock(spec=TopKDocumentStore)
         store.collection_name = "test_collection"
-        store._collection.return_value.query.return_value = [{"_id": "1", "content": "Python is great", "score": 1.2}]
+        store._collection.return_value.query.return_value = [
+            {"_id": "1", "content": "Python is great", "score": 1.2, "meta.lang": "python"}
+        ]
         return store
 
     def test_run_returns_documents(self, mock_store: MagicMock) -> None:
@@ -34,6 +36,18 @@ class TestTopKBM25RetrieverUnit:
             filters={"field": "meta.lang", "operator": "==", "value": "python"},
         )
         assert "documents" in result
+        assert result["documents"][0].meta == {"lang": "python"}
+
+    def test_run_selects_filtered_meta_fields(self, mock_store: MagicMock) -> None:
+        retriever = TopKBM25Retriever(document_store=mock_store)
+        query_builder = MagicMock()
+        query_builder.filter.return_value = query_builder
+        query_builder.topk.return_value = query_builder
+        with patch(
+            "haystack_integrations.components.topk.bm25_retriever.select", return_value=query_builder
+        ) as mock_select:
+            retriever.run(query="Python", filters={"field": "meta.lang", "operator": "==", "value": "python"})
+        assert mock_select.call_args.args == ("content", "blob", "blob_mime_type", "meta.lang")
 
     def test_run_top_k_override(self, mock_store: MagicMock) -> None:
         retriever = TopKBM25Retriever(document_store=mock_store, top_k=10)
