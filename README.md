@@ -1,80 +1,234 @@
-# Custom Component Template
+# topk-haystack
 
-A template repository for creating custom [Haystack](https://haystack.deepset.ai/) components and publishing them as standalone Python packages.
+Build RAG pipelines in a few lines of code with [TopK](https://topk.io) and [Haystack](https://haystack.deepset.ai/).
 
-For more details, see the Haystack documentation on [creating custom components](https://docs.haystack.deepset.ai/docs/custom-components) and [creating custom document stores](https://docs.haystack.deepset.ai/docs/creating-custom-document-stores).
+Ships with retrievers for every search mode — semantic (embeddings handled server-side, no embedder component needed),
+dense vector, BM25 keyword, hybrid, and metadata filtering. Scales to billions of documents with native partition support for multi-tenant workloads.
 
-## How to use this template
+## Installation
 
-1. Click **[Use this template](https://github.com/deepset-ai/custom-component/generate)** to create a new repository.
-
-2. **Rename the package directory** from `src/haystack_integrations/components/example/` to match your integration. See [Namespace convention](#namespace-convention) below for the correct path.
-
-3. **Update `pyproject.toml`** — search for `TODO` comments and replace:
-   - `name`: your package name, following the `<technology>-haystack` convention (e.g. `opensearch-haystack`)
-   - `description`, `authors`, `keywords`, `project.urls`
-   - `dependencies`: add your integration-specific dependencies
-   - `tool.hatch.version.raw-options`: if you renamed directories, the version path is still derived from git tags so no change is needed here
-
-4. **Add your component code** in the renamed directory and export your classes from `__init__.py`.
-
-5. **Add tests** in `tests/` — see the skeleton in `tests/test_example.py`.
-
-6. **Search for all `TODO` comments** across the project and address them.
-
-Check out the [video walkthrough](https://www.youtube.com/watch?v=SWC0QecAMcI) for a step-by-step guide on how to use this template.
-
-## Namespace convention
-
-Haystack integrations use the `haystack_integrations` namespace package. The directory structure under `src/` determines the import path for your component.
-
-**Components** (converters, embedders, generators, rankers, etc.) use:
+```bash
+pip install topk-haystack
 ```
-src/haystack_integrations/components/<type>/<name>/
-```
-Import path: `from haystack_integrations.components.<type>.<name> import MyComponent`
 
-Common component types: `converters`, `embedders`, `generators`, `rankers`, `retrievers`, `connectors`, `tools`, `websearch`
+## Quick start
 
-**Document stores** use a separate namespace:
+```python
+import os
+from haystack import Document, Pipeline
+from haystack.components.writers import DocumentWriter
+from haystack.utils import Secret
+
+from haystack_integrations.components.topk import TopKSemanticRetriever
+from haystack_integrations.document_stores.topk import TopKDocumentStore
+
+store = TopKDocumentStore(
+    api_key=Secret.from_env_var("TOPK_API_KEY"), # Get your API key: https://console.topk.io/api-key
+    region="aws-us-east-1-elastica", # See available regions: https://docs.topk.io/regions
+    collection_name="my-docs",
+)
+
+# Index documents
+indexing = Pipeline()
+indexing.add_component("writer", DocumentWriter(document_store=store))
+indexing.run({"writer": {"documents": [
+    Document(content="Rust guarantees memory safety without a garbage collector."),
+    Document(content="Python is known for readable syntax and scientific libraries."),
+]}})
+
+# Query
+retriever = TopKSemanticRetriever(document_store=store, top_k=2)
+pipeline = Pipeline()
+pipeline.add_component("retriever", retriever)
+result = pipeline.run({"retriever": {"query": "memory safe systems programming"}})
+for doc in result["retriever"]["documents"]:
+    print(f"[{doc.score:.3f}] {doc.content}")
 ```
-src/haystack_integrations/document_stores/<name>/
+
+Set `TOPK_API_KEY` in your environment. Get your API key from the [TopK console](https://console.topk.io/api-key).
+
+## Document store
+
+```python
+TopKDocumentStore(
+    region="aws-us-east-1-elastica",   # required — see https://topk.io/docs/regions
+    api_key=Secret.from_env_var("TOPK_API_KEY"),
+    collection_name="haystack",        # collection to create or reuse
+    embedding_dim=768,                 # vector dimension (must match your embedder)
+    similarity="cosine",               # "cosine" | "euclidean" | "dot_product"
+    recreate_collection=False,         # drop and recreate on init
+    filter_documents_limit=10_000,     # cap for filter_documents()
+    partition=None,                    # optional partition for multi-tenant use
+)
 ```
-Import path: `from haystack_integrations.document_stores.<name> import MyDocumentStore`
+
+TopK uses upsert semantics — documents with the same ID are overwritten when using `DuplicatePolicy.NONE` or `DuplicatePolicy.OVERWRITE`. `DuplicatePolicy.SKIP` and `DuplicatePolicy.FAIL` are not supported and raise a `ValueError`.
+
+TopK can only return metadata fields that are explicitly selected. This integration automatically returns `meta.*` fields referenced in filters; unfiltered queries return documents without metadata.
+
+## Retrievers
+
+### Semantic (server-side embedding)
+
+TopK embeds documents and queries server-side. No embedder component needed.
+
+```python
+from haystack_integrations.components.topk import TopKSemanticRetriever
+
+retriever = TopKSemanticRetriever(document_store=store, top_k=5)
+pipeline.add_component("retriever", retriever)
+result = pipeline.run({"retriever": {"query": "your question here"}})
+```
+
+### Dense vector (bring your own embedder)
+
+Embed documents and queries with your own model (e.g. `SentenceTransformers`).
+`embedding_dim` in `TopKDocumentStore` must match the model's output dimension.
+
+```python
+from haystack.components.embedders import (
+    SentenceTransformersDocumentEmbedder,
+    SentenceTransformersTextEmbedder,
+)
+from haystack_integrations.components.topk import TopKEmbeddingRetriever
+
+MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+# Indexing — embed before writing
+indexing = Pipeline()
+indexing.add_component("embedder", SentenceTransformersDocumentEmbedder(model=MODEL))
+indexing.add_component("writer", DocumentWriter(document_store=store))
+indexing.connect("embedder.documents", "writer.documents")
+
+# Querying
+query_pipeline = Pipeline()
+query_pipeline.add_component("embedder", SentenceTransformersTextEmbedder(model=MODEL))
+query_pipeline.add_component("retriever", TopKEmbeddingRetriever(document_store=store, top_k=5))
+query_pipeline.connect("embedder.embedding", "retriever.query_embedding")
+result = query_pipeline.run({"embedder": {"text": "your question here"}})
+```
+
+### BM25 keyword
+
+```python
+from haystack_integrations.components.topk import TopKBM25Retriever
+
+retriever = TopKBM25Retriever(document_store=store, top_k=5)
+pipeline.add_component("retriever", retriever)
+result = pipeline.run({"retriever": {"query": "keyword search terms"}})
+```
+
+### Hybrid (vector + BM25)
+
+Combines dense vector similarity with BM25 keyword scoring in a single query. Takes both a text embedding and a keyword query string.
+
+```python
+from haystack_integrations.components.topk import TopKHybridRetriever
+
+retriever = TopKHybridRetriever(document_store=store, top_k=5)
+query_pipeline = Pipeline()
+query_pipeline.add_component("embedder", SentenceTransformersTextEmbedder(model=MODEL))
+query_pipeline.add_component("retriever", retriever)
+query_pipeline.connect("embedder.embedding", "retriever.query_embedding")
+result = query_pipeline.run({
+    "embedder": {"text": "your natural language question"},
+    "retriever": {"query": "keyword terms"},
+})
+```
+
+### Metadata filter
+
+Retrieve documents by metadata filters only.
+
+```python
+from haystack_integrations.components.topk import TopKMetadataRetriever
+
+retriever = TopKMetadataRetriever(document_store=store, top_k=5)
+pipeline.add_component("retriever", retriever)
+result = pipeline.run({"retriever": {"filters": {
+    "operator": "AND",
+    "conditions": [
+        {"field": "meta.language", "operator": "==", "value": "en"},
+        {"field": "meta.year", "operator": ">=", "value": 2020},
+    ],
+}}})
+```
+
+## Metadata filters
+
+All retrievers accept Haystack-style filter dicts. Supported operators:
+
+| Operator | Description |
+|---|---|
+| `==`, `!=` | Equality / inequality |
+| `>`, `>=`, `<`, `<=` | Numeric comparison |
+| `in` | Field value is in a list |
+| `not in` | Field value is not in a list |
+| `AND`, `OR`, `NOT` | Logical combinators |
+
+```python
+filters = {
+    "operator": "AND",
+    "conditions": [
+        {"field": "meta.language", "operator": "==", "value": "en"},
+        {
+            "operator": "OR",
+            "conditions": [
+                {"field": "meta.year", "operator": "==", "value": 2024},
+                {"field": "meta.year", "operator": "==", "value": 2025},
+            ],
+        },
+    ],
+}
+```
+
+## Multi-tenant (partitions)
+
+Use the `partition` parameter to scope all reads and writes to a logical partition. Different partitions in the same collection are fully isolated.
+
+```python
+store_a = TopKDocumentStore(region="...", collection_name="shared", partition="tenant-a")
+store_b = TopKDocumentStore(region="...", collection_name="shared", partition="tenant-b")
+```
 
 ## Development
 
-This project uses [Hatch](https://hatch.pypa.io/) for build and environment management.
-
 ```bash
-# Install Hatch
-pip install hatch
-
-# Format and lint
-hatch run fmt        # auto-fix
-hatch run fmt-check  # check only
-
-# Run tests
-hatch run test:unit         # unit tests only
-hatch run test:integration  # integration tests only
-hatch run test:all          # all tests
-hatch run test:cov          # with coverage
+git clone https://github.com/topk-io/topk-haystack
+cd topk-haystack
+uv sync --group dev
 ```
 
-## Publishing to PyPI
+```bash
+export TOPK_API_KEY=your-api-key   # https://console.topk.io/api-key
+export TOPK_REGION=aws-us-east-1-elastica
+```
 
-This template includes a GitHub Actions workflow that publishes your package to PyPI when you push a version tag.
+```bash
+uv run pytest -m "not integration" tests/   # unit tests
+uv run pytest -m "integration" tests/       # integration tests
+uv run pytest tests/                        # all tests
+uv run pytest --cov=haystack_integrations tests/  # with coverage
+```
 
-1. **Add a `PYPI_API_TOKEN` secret** to your repository settings (Settings > Secrets and variables > Actions).
+Lint and format:
 
-2. **Create a version tag** and push it:
-   ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
-   ```
+```bash
+uv run ruff check --fix . && uv run ruff format .   # auto-fix
+uv run ruff check . && uv run ruff format --check . # check only
+```
 
-The release workflow will build and publish the package automatically.
+Or with [Hatch](https://hatch.pypa.io/):
+
+```bash
+hatch run fmt            # auto-fix
+hatch run fmt-check      # check only
+hatch run test:unit
+hatch run test:integration
+hatch run test:all
+hatch run test:cov
+```
 
 ## License
 
-`Apache-2.0` - See [LICENSE](LICENSE) for details.
+Apache-2.0 — see [LICENSE](LICENSE).
